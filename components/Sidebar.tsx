@@ -7,7 +7,8 @@ import {
   Calendar, 
   FileText, 
   Settings,
-  Activity
+  Activity,
+  ScrollText
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -19,6 +20,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setCurrentView })
   const menuItems = [
     { id: View.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
     { id: View.SIMULATOR, label: 'Voice Simulator', icon: Activity },
+    { id: View.SCRIPTS, label: 'Script Builder', icon: ScrollText },
     { id: View.LEADS, label: 'Leads', icon: Users },
     { id: View.SCHEDULER, label: 'Scheduler', icon: Calendar },
     { id: View.PROPOSALS, label: 'Proposals', icon: FileText },

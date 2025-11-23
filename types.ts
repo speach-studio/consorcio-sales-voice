@@ -4,7 +4,8 @@ export enum View {
   SIMULATOR = 'SIMULATOR',
   SCHEDULER = 'SCHEDULER',
   PROPOSALS = 'PROPOSALS',
-  SETTINGS = 'SETTINGS'
+  SETTINGS = 'SETTINGS',
+  SCRIPTS = 'SCRIPTS'
 }
 
 export enum LeadStatus {
@@ -55,4 +56,15 @@ export interface Meeting {
   startTime: string; // ISO string
   duration: number; // minutes
   status: 'confirmed' | 'pending' | 'completed';
+}
+
+export interface ScriptRule {
+  id: string;
+  condition: string;
+  instruction: string;
+}
+
+export interface ScriptConfig {
+  basePersona: string;
+  rules: ScriptRule[];
 }

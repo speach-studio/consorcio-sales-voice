@@ -1,25 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { Mic, MicOff, Phone, PhoneOff, Settings2, User, Bot, Volume2 } from 'lucide-react';
+import { Mic, MicOff, Phone, PhoneOff, Settings2, Volume2 } from 'lucide-react';
+import { ScriptConfig } from '../types';
 
 interface LiveCallSimulatorProps {
-  systemInstruction?: string;
+  scriptConfig?: ScriptConfig;
 }
 
 export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({ 
-  systemInstruction = `You are "Julia", a top-tier sales representative for "Consórcio Futuro", a Brazilian consortium company. 
-  
-  Your goals:
-  1. Qualify the lead (ask about budget, goals: car or house).
-  2. Explain the benefits of consortium (no high interest rates, planned purchase).
-  3. Schedule a meeting with a senior consultant.
-  
-  Behavior:
-  - Be professional, warm, and persuasive.
-  - Speak Portuguese or English depending on the user.
-  - Handle objections about "waiting time" by explaining the "lance" (bid) system.
-  - If the user isn't interested, politely try to find out why, then end the call gracefully.
-  - Keep responses concise and conversational.`
+  scriptConfig
 }) => {
   const [isActive, setIsActive] = useState(false);
   const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -34,12 +23,24 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  
-  // Playback timing
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
 
-  // Helper: Create PCM Blob
+  // Construct system instruction from config or default
+  const getSystemInstruction = () => {
+    if (!scriptConfig) {
+      return `You are "Julia", a sales rep for "Consórcio Futuro". Qualify leads for vehicles/real estate. Be professional and warm.`;
+    }
+
+    let instruction = `${scriptConfig.basePersona}\n\nIMPORTANT: Follow these specific interaction rules based on user input:\n`;
+    
+    scriptConfig.rules.forEach((rule, index) => {
+      instruction += `${index + 1}. IF USER SAYS: "${rule.condition}" -> THEN: ${rule.instruction}\n`;
+    });
+    
+    return instruction;
+  };
+
   const createBlob = (data: Float32Array): { data: string, mimeType: string } => {
     const l = data.length;
     const int16 = new Int16Array(l);
@@ -61,7 +62,6 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
     };
   };
 
-  // Helper: Decode Audio
   const decode = (base64: string) => {
     const binaryString = atob(base64);
     const len = binaryString.length;
@@ -119,7 +119,7 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
   const startCall = async () => {
     setError(null);
     setStatus('connecting');
-    setLogs(prev => [...prev, { role: 'system', text: 'Initializing secure connection...' }]);
+    setLogs(prev => [...prev, { role: 'system', text: 'Initializing connection with custom script...' }]);
 
     try {
       const apiKey = process.env.API_KEY;
@@ -128,8 +128,6 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      
-      // Setup Audio Contexts
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       
@@ -137,11 +135,9 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
       outputAudioContextRef.current = outputCtx;
       nextStartTimeRef.current = outputCtx.currentTime;
 
-      // Microphone Access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      // Connect to Gemini
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
@@ -149,8 +145,7 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
-          systemInstruction: systemInstruction,
-          // We can enable transcription to show chat bubbles
+          systemInstruction: getSystemInstruction(),
           inputAudioTranscription: {},
           outputAudioTranscription: {},
         },
@@ -158,16 +153,13 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
           onopen: () => {
             setStatus('connected');
             setIsActive(true);
-            setLogs(prev => [...prev, { role: 'system', text: 'Call Connected. Speak now.' }]);
+            setLogs(prev => [...prev, { role: 'system', text: 'Connected. Using active script configuration.' }]);
             
-            // Setup Input Processing
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             
             scriptProcessor.onaudioprocess = (e) => {
                const inputData = e.inputBuffer.getChannelData(0);
-               
-               // Simple volume meter
                let sum = 0;
                for(let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
                setVolume(Math.sqrt(sum / inputData.length));
@@ -180,54 +172,26 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
 
             source.connect(scriptProcessor);
             scriptProcessor.connect(inputCtx.destination);
-            
             sourceRef.current = source;
             processorRef.current = scriptProcessor;
           },
           onmessage: async (msg: LiveServerMessage) => {
-             // Handle Transcriptions
-             if (msg.serverContent?.inputTranscription?.text) {
-                // User speaking (accumulated or final)
-                // For a simpler demo, we just log "turnComplete" events or significant chunks
-             }
-             
-             if (msg.serverContent?.turnComplete) {
-                // This is a good place to sync logs, but since transcription arrives in pieces, 
-                // we'll rely on serverContent structure.
-                // Note: The Live API transcription handling can be verbose.
-             }
-             
-             // Handle Audio Output
              const audioData = msg.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
              if (audioData) {
                 const ctx = outputAudioContextRef.current;
                 if (!ctx) return;
 
                 nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
-                
-                const audioBuffer = await decodeAudioData(
-                  decode(audioData),
-                  ctx,
-                  24000,
-                  1
-                );
-                
+                const audioBuffer = await decodeAudioData(decode(audioData), ctx, 24000, 1);
                 const source = ctx.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(ctx.destination);
-                
-                source.addEventListener('ended', () => {
-                  sourcesRef.current.delete(source);
-                });
-                
+                source.addEventListener('ended', () => sourcesRef.current.delete(source));
                 source.start(nextStartTimeRef.current);
                 nextStartTimeRef.current += audioBuffer.duration;
                 sourcesRef.current.add(source);
              }
-
-             // Handle Interruption
              if (msg.serverContent?.interrupted) {
-                setLogs(prev => [...prev, { role: 'system', text: 'User interrupted model.' }]);
                 sourcesRef.current.forEach(s => s.stop());
                 sourcesRef.current.clear();
                 nextStartTimeRef.current = 0;
@@ -248,9 +212,6 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
           }
         }
       });
-      
-      // Wait for session to be ready before storing ref if needed, 
-      // though callbacks handle most logic.
       sessionRef.current = sessionPromise;
 
     } catch (e: any) {
@@ -270,15 +231,11 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
   };
 
   useEffect(() => {
-    return () => {
-      endCall();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { endCall(); };
   }, []);
 
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[600px]">
-      {/* Header */}
       <div className="bg-slate-800/50 p-4 border-b border-slate-700 flex justify-between items-center">
         <div className="flex items-center gap-3">
           <div className={`w-3 h-3 rounded-full ${status === 'connected' ? 'bg-green-500 animate-pulse' : status === 'connecting' ? 'bg-yellow-500 animate-bounce' : 'bg-slate-500'}`} />
@@ -289,21 +246,17 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
         </div>
       </div>
 
-      {/* Visualization Area */}
       <div className="flex-1 bg-slate-950 relative flex items-center justify-center p-8 overflow-hidden">
-        {/* Background Grid */}
         <div className="absolute inset-0 opacity-10" 
              style={{ backgroundImage: 'radial-gradient(circle, #3b82f6 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
         </div>
 
-        {/* Central Avatar/Visualizer */}
         <div className="relative z-10">
           <div className={`w-32 h-32 rounded-full flex items-center justify-center transition-all duration-300 ${
             status === 'connected' ? 'bg-blue-600/20 ring-4 ring-blue-500/20' : 'bg-slate-800'
           }`}>
              {status === 'connected' ? (
                <div className="flex gap-1 h-12 items-center">
-                  {/* Fake waveform animation based on volume or just idle */}
                   {[1,2,3,4,5].map(i => (
                     <div key={i} 
                          className="w-2 bg-blue-500 rounded-full transition-all duration-75"
@@ -319,7 +272,6 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
              )}
           </div>
           
-          {/* Ripples */}
           {status === 'connected' && (
              <>
               <div className="absolute inset-0 rounded-full border border-blue-500/30 animate-[ping_2s_ease-out_infinite]" />
@@ -328,7 +280,6 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
           )}
         </div>
 
-        {/* Info Text */}
         <div className="absolute bottom-8 text-center w-full px-8">
            {error ? (
              <p className="text-red-400 bg-red-900/20 py-2 px-4 rounded-lg inline-block border border-red-900/50">{error}</p>
@@ -340,7 +291,6 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
         </div>
       </div>
 
-      {/* Controls */}
       <div className="bg-slate-900 p-6 border-t border-slate-800">
         <div className="flex justify-between items-center max-w-2xl mx-auto">
            <div className="flex gap-4">
@@ -375,11 +325,10 @@ export const LiveCallSimulator: React.FC<LiveCallSimulatorProps> = ({
              </button>
            )}
            
-           <div className="w-24"></div> {/* Spacer for center alignment */}
+           <div className="w-24"></div>
         </div>
       </div>
       
-      {/* Transcript Overlay (Bottom Left) */}
       <div className="absolute top-20 left-4 w-64 h-48 pointer-events-none opacity-50">
         <div className="flex flex-col gap-2">
           {logs.slice(-3).map((log, idx) => (
