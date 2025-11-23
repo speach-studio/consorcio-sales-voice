@@ -1,0 +1,7 @@
+{
+  "name": "Copy of ConsorcioAI Voice Agent",
+  "description": "AI-powered sales platform for Consortium management featuring real-time voice simulation using Gemini Live API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
